@@ -691,6 +691,9 @@ if __name__ == "__main__":
                 n = int(os.environ["FBD_TEST_PAUSE"]) * 1000
                 a.after(n, a.b_pause.invoke); a.after(n + 8000, a.b_pause.invoke)
             if os.environ.get("FBD_TEST_CANCEL"):  # N sn sonra Iptal
-                a.after(int(os.environ["FBD_TEST_CANCEL"]) * 1000, a.b_cancel.invoke)
+                a.after(int(float(os.environ["FBD_TEST_CANCEL"]) * 1000), a.b_cancel.invoke)
+            if os.environ.get("FBD_TEST_CLOSE"):  # N sn sonra pencereyi kapat (onay atlanir)
+                def cl(): a.closing = True; a.save_settings(); a.cancel(); a.after(10000, a._force_close)
+                a.after(int(os.environ["FBD_TEST_CLOSE"]) * 1000, cl)
         a.after(6000, click)
     a.mainloop()
