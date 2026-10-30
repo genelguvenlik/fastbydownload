@@ -275,11 +275,11 @@ class App(tk.Tk):
             "Yalnızca kendi içeriklerinizi veya indirme izni olan içerikleri indirin.")).pack(anchor="w", pady=12)
 
     # ---- yardimcilar
-    def ui(self, fn, *a): self.q.put((fn, a))
+    def ui(self, fn, *a, **kw): self.q.put((fn, a, kw))
     def pump(self):
         try:
             while True:
-                fn, a = self.q.get_nowait(); fn(*a)
+                fn, a, kw = self.q.get_nowait(); fn(*a, **kw)
         except queue.Empty: pass
         try:
             cur = float(self.pb["value"]); tgt = self.pb_target * 10
