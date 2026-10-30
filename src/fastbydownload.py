@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 APP = "fastByDownload"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 REPO = "genelguvenlik/fastbydownload"
 MANIFEST_URL = os.environ.get("FBD_MANIFEST") or f"https://github.com/{REPO}/releases/latest/download/fastbydownload-guncelleme.json"
 APPDATA = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"), APP)
@@ -112,7 +112,22 @@ def install_and_restart(new_exe, sha):
     except OSError: subprocess.Popen(args, creationflags=0x08000000 | 0x00000200, **kw)
 
 # ---------------- arayuz ----------------
-PROG_RE = re.compile(r"^FBDP\|(?P<p>[^|]*)\|(?P<s>[^|]*)\|(?P<e>[^|]*)\|(?P<d>[^|]*)\|(?P<t>[^|]*)$")
+PROG_FIELDS = ("d", "t", "s", "e", "fid", "vc", "ac", "res", "ext")
+
+def num(x):
+    try: return float(x)
+    except (TypeError, ValueError): return None
+
+def human(b):
+    if b is None: return "—"
+    for u in ("B", "KB", "MB", "GB"):
+        if b < 1024 or u == "GB": return f"{b:.0f} {u}" if u == "B" else f"{b:.1f} {u}"
+        b /= 1024
+
+def hms(sec):
+    if sec is None: return "—"
+    sec = int(sec); return f"{sec//3600:d}:{sec%3600//60:02d}:{sec%60:02d}" if sec >= 3600 else f"{sec//60:02d}:{sec%60:02d}"
+
 
 def dpi_aware():
     if os.name != "nt": return
@@ -136,7 +151,7 @@ class App(tk.Tk):
     def __init__(self):
         dpi_aware(); load_fonts()
         super().__init__()
-        self.title(f"{APP} {VERSION}"); sc = self.winfo_fpixels("1i") / 96; self.geometry(f"{int(920*sc)}x{int(680*sc)}"); self.minsize(int(780*sc), int(600*sc))
+        self.title(f"{APP} {VERSION}"); sc = self.winfo_fpixels("1i") / 96; self.geometry(f"{int(940*sc)}x{int(800*sc)}"); self.minsize(int(800*sc), int(720*sc))
         try: self.iconbitmap(res("icon.ico"))
         except Exception: pass
         self.q = queue.Queue(); self.proc = None; self.cancelled = False; self.info = None; self.last_file = None
@@ -210,8 +225,22 @@ class App(tk.Tk):
         self.b_cancel = ttk.Button(b, text="İptal", command=self.cancel, state="disabled"); self.b_cancel.pack(side="left", padx=6)
         self.b_ofile = ttk.Button(b, text="Dosyayı Aç", command=self.open_last, state="disabled"); self.b_ofile.pack(side="right")
         self.b_odir = ttk.Button(b, text="Klasörde Göster", command=self.reveal_last, state="disabled"); self.b_odir.pack(side="right", padx=6)
-        self.pb = ttk.Progressbar(t1, maximum=100); self.pb.pack(fill="x", pady=4)
+        self.pb = ttk.Progressbar(t1, maximum=1000); self.pb.pack(fill="x", pady=4)
+        self.pb_target = 0.0
         self.status = ttk.Label(t1, text="Hazır."); self.status.pack(anchor="w")
+        tp = ttk.LabelFrame(t1, text="Teknik Bilgi", padding=(10, 6)); tp.pack(fill="x", pady=(8, 0))
+        self.tech = {}
+        rows = (("asama", "Aşama"), ("yuzde", "İlerleme"), ("hiz", "Hız"), ("boyut", "İnen / Toplam"),
+                ("kalan", "Kalan süre"), ("gecen", "Geçen süre"), ("bicim", "Biçim"), ("kodek", "Kodek / Bit hızı"),
+                ("dosya", "Dosya adı"), ("klasor", "Kayıt yeri"))
+        for i, (k, lbl) in enumerate(rows):
+            r, c = (i // 2, (i % 2) * 2) if i < 8 else (4 + i - 8, 0)
+            ttk.Label(tp, text=lbl + ":", foreground="#666").grid(row=r, column=c, sticky="w", padx=(0, 8), pady=1)
+            v = ttk.Label(tp, text="—", font=(self.FONT, 10, "bold"))
+            v.grid(row=r, column=c + 1, columnspan=3 if i >= 8 else 1, sticky="w", padx=(0, 24), pady=1)
+            self.tech[k] = v
+        tp.columnconfigure(1, weight=1); tp.columnconfigure(3, weight=1)
+        self.t0 = None
         # --- gecmis
         r = ttk.Frame(t2); r.pack(fill="x")
         ttk.Label(r, text="Ara:").pack(side="left")
@@ -252,7 +281,12 @@ class App(tk.Tk):
             while True:
                 fn, a = self.q.get_nowait(); fn(*a)
         except queue.Empty: pass
-        self.after(80, self.pump)
+        try:
+            cur = float(self.pb["value"]); tgt = self.pb_target * 10
+            if abs(tgt - cur) > 0.5: self.pb["value"] = cur + (tgt - cur) * 0.35 if tgt > cur else tgt
+            if self.t0 is not None: self.tech["gecen"].config(text=hms(time.time() - self.t0))
+        except Exception: pass
+        self.after(50, self.pump)
 
     def save_settings(self):
         self.settings.update(kind=self.kind.get(), outdir=self.outdir.get(), auto_update=self.auto_upd.get())
@@ -327,8 +361,9 @@ class App(tk.Tk):
     # ---- indirme
     def build_args(self, u, out):
         tmpl = os.path.join(out, "%(title).150B [%(id)s].%(ext)s")
-        a = [YTDLP, u, "--no-playlist", "--newline", "--no-colors", "--ffmpeg-location", BIN, "-o", tmpl,
-             "--progress-template", "download:FBDP|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress._downloaded_bytes_str)s|%(progress._total_bytes_str)s",
+        a = [YTDLP, u, "--no-playlist", "--newline", "--no-colors", "--progress", "--ffmpeg-location", BIN, "-o", tmpl,
+             "--progress-template", "download:FBDP|%(progress.downloaded_bytes)s|%(progress.total_bytes,progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s|%(info.vcodec)s|%(info.acodec)s|%(info.resolution)s|%(info.ext)s",
+             "--print", "before_dl:FBDI|%(format_id)s|%(resolution)s|%(vcodec)s|%(acodec)s|%(tbr)s|%(abr)s|%(fps)s|%(ext)s",
              "--print", "after_move:FBDF|%(filepath)s", "--windows-filenames"]
         q = self.quality.get()
         if self.kind.get() == "audio":
@@ -339,6 +374,9 @@ class App(tk.Tk):
             a += ["-f", "bv*+ba/b", "-S", (f"res:{h}," if h else "res,") + "vcodec:h264,acodec:aac", "--merge-output-format", "mp4", "--remux-video", "mp4"]
         return a
 
+    def set_tech(self, **kw):
+        for k, v in kw.items(): self.tech[k].config(text=v)
+
     def start(self):
         u = self.url.get().strip()
         if not re.match(r"https?://", u):
@@ -347,43 +385,79 @@ class App(tk.Tk):
         try: os.makedirs(out, exist_ok=True)
         except Exception as e: messagebox.showerror(APP, f"Klasör oluşturulamadı:\n{e}"); return
         self.save_settings()
-        self.cancelled = False; self.pb["value"] = 0
+        self.cancelled = False; self.pb["value"] = 0; self.pb_target = 0
         self.b_dl.config(state="disabled"); self.b_cancel.config(state="normal")
-        self.status.config(text="Başlatılıyor…")
+        self.status.config(text="Bağlantı çözümleniyor…")
+        for k in self.tech: self.tech[k].config(text="—")
+        self.set_tech(asama="Video bilgisi alınıyor", klasor=out); self.t0 = time.time()
         threading.Thread(target=self._download, args=(u, out, self.kind.get(), self.quality.get()), daemon=True).start()
 
     def _download(self, u, out, kind, q):
         files, err = [], []
+        streams, cur_stream = [], None
         try:
             self.proc = subprocess.Popen(self.build_args(u, out), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                         encoding="utf-8", errors="replace", creationflags=NOWIN, bufsize=1)
+                                         encoding="utf-8", errors="replace", creationflags=NOWIN, bufsize=1,
+                                         stdin=subprocess.DEVNULL, env=dict(os.environ, PYTHONUNBUFFERED="1"))
             for line in self.proc.stdout:
                 line = line.rstrip()
-                m = PROG_RE.match(line)
-                if m:
-                    try: pct = float(m["p"].strip().rstrip("%"))
-                    except ValueError: pct = None
-                    txt = f"%{m['p'].strip().rstrip('%')}   •   {m['d'].strip()} / {m['t'].strip()}   •   Hız: {m['s'].strip()}   •   Kalan: {m['e'].strip()}"
-                    if pct is not None: self.ui(self.pb.config, {"value": pct})
-                    self.ui(self.status.config, {"text": txt})
+                if line.startswith("FBDP|"):
+                    f = dict(zip(PROG_FIELDS, line[5:].split("|")))
+                    d, t, sp, eta = num(f.get("d")), num(f.get("t")), num(f.get("s")), num(f.get("e"))
+                    vc, ac = f.get("vc", "none"), f.get("ac", "none")
+                    if f.get("fid") != cur_stream: cur_stream = f.get("fid"); streams.append(cur_stream)
+                    if vc not in ("none", "NA", "") and ac in ("none", "NA", ""): stage = "Video akışı indiriliyor"
+                    elif ac not in ("none", "NA", "") and vc in ("none", "NA", ""): stage = "Ses akışı indiriliyor"
+                    else: stage = "İndiriliyor"
+                    pct = (d / t * 100) if d is not None and t else None
+                    n = len(streams); total_n = 2 if kind == "video" and getattr(self, "_two", False) else 1
+                    overall = pct if pct is not None else None
+                    if overall is not None and total_n == 2: overall = (min(n, 2) - 1) * 50 + pct / 2
+                    if overall is not None: self.pb_target = min(overall, 99.0 if kind == "audio" or total_n == 2 else 100.0)
+                    self.ui(self.set_tech, asama=stage + (f" ({min(n,2)}/2)" if total_n == 2 else ""),
+                            yuzde=f"%{pct:.1f}" if pct is not None else "—", hiz=(human(sp) + "/s") if sp else "—",
+                            boyut=f"{human(d)} / {human(t)}", kalan=hms(eta))
+                    self.ui(self.status.config, {"text": f"{stage} — %{pct:.1f}  •  {human(sp)}/s" if pct is not None and sp else stage + "…"})
+                elif line.startswith("FBDI|"):
+                    p = (line[5:].split("|") + [""] * 8)[:8]
+                    fid, resn, vc, ac, tbr, abr, fps, ext = p
+                    self._two = "+" in fid
+                    kod = []
+                    if vc not in ("none", "NA", ""): kod.append(vc.split(".")[0])
+                    if ac not in ("none", "NA", ""): kod.append(ac.split(".")[0])
+                    br = f"{float(tbr):.0f} kbps" if num(tbr) else (f"{float(abr):.0f} kbps" if num(abr) else "")
+                    if kind == "audio": bic = f"MP3 {q} (kaynak: {ext}, {ac.split('.')[0]})"
+                    else: bic = f"MP4 {resn}" + (f" @{float(fps):.0f}fps" if num(fps) else "") + f"  (format {fid})"
+                    self.ui(self.set_tech, bicim=bic, kodek=" + ".join(kod) + (f"  •  {br}" if br else ""))
+                elif line.startswith("[download] Destination:"):
+                    self.ui(self.set_tech, dosya=os.path.basename(line.split(":", 1)[1].strip()))
                 elif line.startswith("FBDF|"):
-                    files.append(line[5:])
-                elif "[ExtractAudio]" in line or "[Merger]" in line or "[VideoRemuxer]" in line:
-                    self.ui(self.status.config, {"text": "Dönüştürülüyor (ffmpeg)…"})
+                    files.append(line[5:]); self.ui(self.set_tech, dosya=os.path.basename(line[5:]))
+                elif line.startswith("[Merger]"):
+                    self.ui(self.set_tech, asama="Video ve ses birleştiriliyor (ffmpeg)"); self.ui(self.status.config, {"text": "Birleştiriliyor…"})
+                elif line.startswith("[ExtractAudio]"):
+                    self.ui(self.set_tech, asama="MP3'e dönüştürülüyor (ffmpeg)"); self.ui(self.status.config, {"text": "MP3'e dönüştürülüyor…"})
+                elif line.startswith("[VideoRemuxer]") or line.startswith("[EmbedThumbnail]") or line.startswith("[Metadata]"):
+                    self.ui(self.set_tech, asama="Son işlemler (kapak / etiket)")
                 elif line.startswith("ERROR"):
                     err.append(line)
             rc = self.proc.wait()
         except Exception as e:
             rc, err = -1, [str(e)]
-        self.proc = None
+        self.proc = None; self._two = False
         self.ui(self.done, rc, files, err, u, kind, q)
 
     def done(self, rc, files, err, u, kind, q):
         self.b_dl.config(state="normal"); self.b_cancel.config(state="disabled")
         if self.cancelled:
-            self.pb["value"] = 0; self.status.config(text="İndirme iptal edildi."); return
+            self.t0 = None; self.pb_target = 0; self.pb["value"] = 0; self.set_tech(asama="İptal edildi")
+            self.status.config(text="İndirme iptal edildi."); return
+        self.t0 = None
         if rc == 0 and files:
-            f = files[-1]; self.last_file = f; self.pb["value"] = 100
+            f = files[-1]; self.last_file = f; self.pb_target = 100
+            try: sz = human(os.path.getsize(f))
+            except OSError: sz = "—"
+            self.set_tech(asama="Tamamlandı ✓", yuzde="%100", kalan="00:00", dosya=os.path.basename(f), boyut=f"{sz} (son dosya)")
             self.status.config(text=f"Tamamlandı: {os.path.basename(f)}")
             self.b_ofile.config(state="normal"); self.b_odir.config(state="normal")
             title = (self.info or {}).get("title") if (self.info or {}).get("_url") == u else None
