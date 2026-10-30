@@ -289,8 +289,8 @@ class App(tk.Tk):
             a += ["-f", "bestaudio/best", "-x", "--audio-format", "mp3", "--audio-quality", q.split()[0] + "K", "--embed-thumbnail", "--add-metadata"]
         else:
             h = None if q.startswith("En") else q.rstrip("p")
-            f = f"bv*[height<={h}][ext=mp4]+ba[ext=m4a]/bv*[height<={h}]+ba/b[height<={h}]/b" if h else "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/b"
-            a += ["-f", f, "--merge-output-format", "mp4", "--remux-video", "mp4"]
+            # once cozunurluk, ayni cozunurlukte Windows'ta her yerde oynayan H.264 + AAC tercih edilir
+            a += ["-f", "bv*+ba/b", "-S", (f"res:{h}," if h else "res,") + "vcodec:h264,acodec:aac", "--merge-output-format", "mp4", "--remux-video", "mp4"]
         return a
 
     def start(self):
