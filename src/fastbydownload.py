@@ -222,7 +222,9 @@ class App(tk.Tk):
         self.kind_changed()
         b = ttk.Frame(t1); b.pack(fill="x", pady=8)
         self.b_dl = ttk.Button(b, text="⬇  İndir", style="Accent.TButton", command=self.start); self.b_dl.pack(side="left")
+        self.b_pause = ttk.Button(b, text="⏸  Duraklat", command=self.toggle_pause, state="disabled"); self.b_pause.pack(side="left", padx=(6, 0))
         self.b_cancel = ttk.Button(b, text="İptal", command=self.cancel, state="disabled"); self.b_cancel.pack(side="left", padx=6)
+        self.paused = False; self.job = None
         self.b_ofile = ttk.Button(b, text="Dosyayı Aç", command=self.open_last, state="disabled"); self.b_ofile.pack(side="right")
         self.b_odir = ttk.Button(b, text="Klasörde Göster", command=self.reveal_last, state="disabled"); self.b_odir.pack(side="right", padx=6)
         self.pb = ttk.Progressbar(t1, maximum=1000); self.pb.pack(fill="x", pady=4)
@@ -363,7 +365,7 @@ class App(tk.Tk):
     # ---- indirme
     def build_args(self, u, out):
         tmpl = os.path.join(out, "%(title).150B [%(id)s].%(ext)s")
-        a = [YTDLP, u, "--no-playlist", "--newline", "--no-colors", "--progress", "--ffmpeg-location", BIN, "-o", tmpl,
+        a = [YTDLP, u, "--no-playlist", "--newline", "--no-colors", "--progress", "--continue", "--part", "--ffmpeg-location", BIN, "-o", tmpl,
              "--progress-template", "download:FBDP|%(progress.downloaded_bytes)s|%(progress.total_bytes,progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s|%(info.vcodec)s|%(info.acodec)s|%(info.resolution)s|%(info.ext)s",
              "--print", "before_dl:FBDI|%(format_id)s|%(resolution)s|%(vcodec)s|%(acodec)s|%(tbr)s|%(abr)s|%(fps)s|%(ext)s",
              "--print", "after_move:FBDF|%(filepath)s", "--windows-filenames"]
@@ -387,8 +389,9 @@ class App(tk.Tk):
         try: os.makedirs(out, exist_ok=True)
         except Exception as e: messagebox.showerror(APP, f"Klasör oluşturulamadı:\n{e}"); return
         self.save_settings()
-        self.cancelled = False; self.pb["value"] = 0; self.pb_target = 0
-        self.b_dl.config(state="disabled"); self.b_cancel.config(state="normal")
+        self.cancelled = False; self.paused = False; self.pb["value"] = 0; self.pb_target = 0
+        self.b_dl.config(state="disabled"); self.b_cancel.config(state="normal"); self.b_pause.config(state="normal", text="⏸  Duraklat")
+        self.job = (u, out, self.kind.get(), self.quality.get())
         self.status.config(text="Bağlantı çözümleniyor…")
         for k in self.tech: self.tech[k].config(text="—")
         self.set_tech(asama="Video bilgisi alınıyor", klasor=out); self.t0 = time.time()
@@ -450,7 +453,10 @@ class App(tk.Tk):
         self.ui(self.done, rc, files, err, u, kind, q)
 
     def done(self, rc, files, err, u, kind, q):
-        self.b_dl.config(state="normal"); self.b_cancel.config(state="disabled")
+        if self.paused and not self.cancelled:
+            self.t0 = None; self.set_tech(asama="Duraklatıldı ⏸", hiz="—", kalan="—")
+            self.status.config(text="Duraklatıldı. Devam etmek için ▶ Devam'a bas."); self.b_pause.config(state="normal", text="▶  Devam"); return
+        self.b_dl.config(state="normal"); self.b_cancel.config(state="disabled"); self.b_pause.config(state="disabled", text="⏸  Duraklat")
         if self.cancelled:
             self.t0 = None; self.pb_target = 0; self.pb["value"] = 0; self.set_tech(asama="İptal edildi")
             self.status.config(text="İndirme iptal edildi."); return
@@ -471,7 +477,25 @@ class App(tk.Tk):
             self.status.config(text=f"Hata: {msg}")
             messagebox.showerror(APP, f"İndirme başarısız:\n{msg}\n\nSite değiştiyse Ayarlar'dan yt-dlp'yi güncellemeyi dene.")
 
+    def kill_proc(self):
+        p = self.proc
+        if not p: return
+        if os.name == "nt": subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True, creationflags=NOWIN)
+        else: p.kill()
+
+    def toggle_pause(self):
+        if not self.paused:
+            if not self.proc: return
+            self.paused = True; self.b_pause.config(state="disabled"); self.status.config(text="Duraklatılıyor…"); self.kill_proc()
+        else:
+            self.paused = False; self.b_pause.config(text="⏸  Duraklat"); self.t0 = time.time()
+            self.set_tech(asama="Devam ediliyor (.part dosyasından)"); self.status.config(text="Kaldığı yerden devam ediliyor…")
+            threading.Thread(target=self._download, args=self.job, daemon=True).start()
+
     def cancel(self):
+        if self.paused and not self.proc:
+            self.cancelled = True; self.paused = False
+            self.done(1, [], [], *self.job); return
         p = self.proc
         if p:
             self.cancelled = True
@@ -606,5 +630,8 @@ if __name__ == "__main__":
         k, qq = os.environ["FBD_TEST_CLICK"].split("|")
         def click():
             a.kind.set(k); a.kind_changed(); a.quality.set(qq); a.b_dl.invoke()
+            if os.environ.get("FBD_TEST_PAUSE"):  # N sn sonra Duraklat, 8 sn sonra Devam
+                n = int(os.environ["FBD_TEST_PAUSE"]) * 1000
+                a.after(n, a.b_pause.invoke); a.after(n + 8000, a.b_pause.invoke)
         a.after(6000, click)
     a.mainloop()
