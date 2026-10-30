@@ -108,8 +108,8 @@ def install_and_restart(new_exe, sha):
     env.update(FBD_NEW=new_exe, FBD_TGT=tgt, FBD_SHA=sha.lower(), FBD_DATA=APPDATA, FBD_PIDS=f"{os.getpid()},{os.getppid()}")
     args = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", ps1]
     kw = dict(env=env, close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try: subprocess.Popen(args, creationflags=0x00000008 | 0x00000200 | 0x01000000, **kw)  # DETACHED | NEW_GROUP | BREAKAWAY_FROM_JOB
-    except OSError: subprocess.Popen(args, creationflags=0x00000008 | 0x00000200, **kw)
+    try: subprocess.Popen(args, creationflags=0x08000000 | 0x00000200 | 0x01000000, **kw)  # NO_WINDOW | NEW_GROUP | BREAKAWAY_FROM_JOB
+    except OSError: subprocess.Popen(args, creationflags=0x08000000 | 0x00000200, **kw)
 
 # ---------------- arayuz ----------------
 PROG_RE = re.compile(r"^FBDP\|(?P<p>[^|]*)\|(?P<s>[^|]*)\|(?P<e>[^|]*)\|(?P<d>[^|]*)\|(?P<t>[^|]*)$")
