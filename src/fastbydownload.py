@@ -198,7 +198,7 @@ class App(tk.Tk):
         op.columnconfigure(3, weight=1)
         self.kind_changed()
         b = ttk.Frame(t1); b.pack(fill="x", pady=8)
-        self.b_dl = ttk.Button(b, text="⬇  İndir", style="Big.TButton", command=self.start); self.b_dl.pack(side="left")
+        self.b_dl = ttk.Button(b, text="⬇  İndir", style="Accent.TButton", command=self.start); self.b_dl.pack(side="left")
         self.b_cancel = ttk.Button(b, text="İptal", command=self.cancel, state="disabled"); self.b_cancel.pack(side="left", padx=6)
         self.b_ofile = ttk.Button(b, text="Dosyayı Aç", command=self.open_last, state="disabled"); self.b_ofile.pack(side="right")
         self.b_odir = ttk.Button(b, text="Klasörde Göster", command=self.reveal_last, state="disabled"); self.b_odir.pack(side="right", padx=6)
@@ -516,4 +516,6 @@ def selftest():
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--version": print(VERSION); sys.exit(0)
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest": selftest()
-    App().mainloop()
+    a = App()
+    if len(sys.argv) > 1 and re.match(r"https?://", sys.argv[1]): a.url.set(sys.argv[1]); a.after(300, a.preview)
+    a.mainloop()
