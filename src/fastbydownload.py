@@ -124,9 +124,17 @@ def dpi_aware():
             try: ctypes.windll.user32.SetProcessDPIAware()
             except Exception: pass
 
+def load_fonts():
+    """Exe icindeki Inter yazi tipini yalnizca bu islem icin yukler (sisteme kurmaz)."""
+    if os.name != "nt": return
+    import ctypes
+    for n in ("Inter-Regular.ttf", "Inter-Bold.ttf"):
+        f = res(os.path.join("fonts", n))
+        if os.path.exists(f): ctypes.windll.gdi32.AddFontResourceExW(f, 0x10, 0)  # FR_PRIVATE
+
 class App(tk.Tk):
     def __init__(self):
-        dpi_aware()
+        dpi_aware(); load_fonts()
         super().__init__()
         self.title(f"{APP} {VERSION}"); sc = self.winfo_fpixels("1i") / 96; self.geometry(f"{int(920*sc)}x{int(680*sc)}"); self.minsize(int(780*sc), int(600*sc))
         try: self.iconbitmap(res("icon.ico"))
@@ -142,8 +150,8 @@ class App(tk.Tk):
     def style(self):
         import tkinter.font as tkf
         fams = set(tkf.families(self))
-        self.FONT = next((f for f in ("Segoe UI Variable Text", "Segoe UI", "Inter", "DejaVu Sans") if f in fams), "TkDefaultFont")
-        head = "Segoe UI Variable Display" if "Segoe UI Variable Display" in fams else self.FONT
+        self.FONT = next((f for f in ("Inter", "Segoe UI Variable Text", "Segoe UI", "DejaVu Sans") if f in fams), "TkDefaultFont")
+        head = self.FONT
         try: self.tk.call("tk", "scaling", self.winfo_fpixels("1i") / 72.0)
         except Exception: pass
         for n in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont", "TkSmallCaptionFont", "TkIconFont", "TkTooltipFont"):

@@ -4,3 +4,4 @@ fastByDownload asagidaki acik kaynak bilesenleri kullanir:
 - Python, Tkinter (PSF License), Pillow (MIT-CMU / HPND), PyInstaller (GPL + bootloader exception)
 Lisans metinleri derleme sirasinda bu klasore eklenir.
 - sv-ttk Sun Valley tema (MIT) https://github.com/rdbende/Sun-Valley-ttk-theme
+- Inter yazi tipi (SIL OFL 1.1) https://github.com/rsms/inter
