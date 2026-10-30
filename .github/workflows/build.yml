@@ -1,0 +1,84 @@
+name: build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Bagimliliklar
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller==6.11.1 pillow
+          New-Item -ItemType Directory -Force bin | Out-Null
+          Invoke-WebRequest https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe -OutFile bin/yt-dlp.exe
+          Invoke-WebRequest https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip -OutFile ff.zip
+          Expand-Archive ff.zip -DestinationPath ff
+          Copy-Item (Get-ChildItem ff -Recurse -Filter ffmpeg.exe).FullName bin/
+          Copy-Item (Get-ChildItem ff -Recurse -Filter ffprobe.exe).FullName bin/
+          Copy-Item (Get-ChildItem ff -Recurse -Filter LICENSE.txt | Select-Object -First 1).FullName LICENSES/FFmpeg-LICENSE.txt
+          Invoke-WebRequest https://raw.githubusercontent.com/yt-dlp/yt-dlp/master/LICENSE -OutFile LICENSES/yt-dlp-LICENSE.txt
+      - name: Exe derle
+        shell: pwsh
+        run: |
+          $common = @('--onefile','--windowed','--noconfirm','--icon','assets/icon.ico','--add-data','assets/icon.ico;.','--add-binary','bin/yt-dlp.exe;.','--add-binary','bin/ffmpeg.exe;.','--add-binary','bin/ffprobe.exe;.','--add-data','LICENSES;LICENSES')
+          pyinstaller @common --name fastByDownload src/fastbydownload.py
+          (Get-Content src/fastbydownload.py) -replace 'VERSION = "[0-9.]+"','VERSION = "9.9.9"' | Set-Content tmp_new.py -Encoding utf8
+          pyinstaller @common --distpath dist-new --name fastByDownload tmp_new.py
+          Get-ChildItem dist, dist-new
+      - name: Test - MP3 ve MP4 indirme
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $out = "$env:RUNNER_TEMP\out"; New-Item -ItemType Directory -Force $out | Out-Null
+          $urls = @('https://www.youtube.com/watch?v=jNQXAC9IVRw','https://vimeo.com/76979871')
+          foreach ($u in $urls) {
+            $p = Start-Process dist/fastByDownload.exe -ArgumentList @('--selftest',$u,'audio','192 kbps',$out) -Wait -PassThru
+            "audio $u exit=$($p.ExitCode)"
+            $p = Start-Process dist/fastByDownload.exe -ArgumentList @('--selftest',$u,'video','360p',$out) -Wait -PassThru
+            "video $u exit=$($p.ExitCode)"
+          }
+          Get-ChildItem $out | Format-Table Name,Length
+          Get-Content "$env:APPDATA\fastByDownload\gecmis.json"
+      - name: Test - guncelleme (yerinde degistir + yeniden baslat)
+        shell: pwsh
+        run: |
+          $d = "$env:RUNNER_TEMP\upd"; New-Item -ItemType Directory -Force $d | Out-Null
+          Copy-Item dist/fastByDownload.exe $d/
+          $srv = "$env:RUNNER_TEMP\srv"; New-Item -ItemType Directory -Force $srv | Out-Null
+          Copy-Item dist-new/fastByDownload.exe $srv/new.exe
+          $sha = (Get-FileHash $srv/new.exe -Algorithm SHA256).Hash.ToLower()
+          @{version='9.9.9'; url='http://127.0.0.1:8765/new.exe'; sha256=$sha; notes='test'} | ConvertTo-Json | Set-Content $srv/m.json
+          $web = Start-Process python -ArgumentList @('-m','http.server','8765','--bind','127.0.0.1','--directory',$srv) -PassThru
+          Start-Sleep 3
+          $env:FBD_MANIFEST='http://127.0.0.1:8765/m.json'; $env:FBD_TEST_AUTOACCEPT='1'
+          Start-Process "$d/fastByDownload.exe"
+          $ok = $false
+          for ($i=0; $i -lt 90 -and -not $ok; $i++) { Start-Sleep 2; if ((Get-FileHash "$d/fastByDownload.exe").Hash.ToLower() -eq $sha) { $ok = $true } }
+          Start-Sleep 8
+          "replaced=$ok"
+          Get-ChildItem $d -Force | Format-Table Name,Length
+          $procs = Get-Process fastByDownload -ErrorAction SilentlyContinue | Select-Object Id,Path
+          $procs | Format-Table
+          if (-not $ok) { throw 'exe degistirilmedi' }
+          if ((Get-ChildItem $d -Force).Count -ne 1) { throw 'fazla dosya kaldi' }
+          if (-not ($procs | Where-Object { $_.Path -like "$d*" })) { throw 'yeni surum baslamadi' }
+          Get-Process fastByDownload -ErrorAction SilentlyContinue | Stop-Process -Force
+          Stop-Process -Id $web.Id -Force
+      - name: Manifest
+        shell: pwsh
+        run: |
+          $sha = (Get-FileHash dist/fastByDownload.exe -Algorithm SHA256).Hash.ToLower()
+          $v = (Select-String -Path src/fastbydownload.py -Pattern 'VERSION = "([0-9.]+)"').Matches[0].Groups[1].Value
+          @{version=$v; url="https://github.com/${{ github.repository }}/releases/download/v$v/fastByDownload.exe"; sha256=$sha; notes=''} | ConvertTo-Json | Set-Content dist/fastbydownload-guncelleme.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fastByDownload
+          path: |
+            dist/fastByDownload.exe
+            dist/fastbydownload-guncelleme.json

@@ -1,0 +1,7 @@
+build/
+dist/
+dist-new/
+bin/
+*.spec
+__pycache__/
+tmp_new.py
