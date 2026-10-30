@@ -279,7 +279,9 @@ class App(tk.Tk):
     def pump(self):
         try:
             while True:
-                fn, a, kw = self.q.get_nowait(); fn(*a, **kw)
+                fn, a, kw = self.q.get_nowait()
+                try: fn(*a, **kw)
+                except Exception: pass
         except queue.Empty: pass
         try:
             cur = float(self.pb["value"]); tgt = self.pb_target * 10
