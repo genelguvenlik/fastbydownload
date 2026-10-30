@@ -112,7 +112,7 @@ def install_and_restart(new_exe, sha):
     except OSError: subprocess.Popen(args, creationflags=0x08000000 | 0x00000200, **kw)
 
 # ---------------- arayuz ----------------
-PROG_FIELDS = ("d", "t", "s", "e", "fid", "vc", "ac", "res", "ext")
+PROG_FIELDS = ("d", "t", "s", "e", "fid", "vc", "ac", "res", "ext", "fn")
 
 def num(x):
     try: return float(x)
@@ -366,7 +366,7 @@ class App(tk.Tk):
     def build_args(self, u, out):
         tmpl = os.path.join(out, "%(title).150B [%(id)s].%(ext)s")
         a = [YTDLP, u, "--no-playlist", "--newline", "--no-colors", "--progress", "--continue", "--part", "--ffmpeg-location", BIN, "-o", tmpl,
-             "--progress-template", "download:FBDP|%(progress.downloaded_bytes)s|%(progress.total_bytes,progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s|%(info.vcodec)s|%(info.acodec)s|%(info.resolution)s|%(info.ext)s",
+             "--progress-template", "download:FBDP|%(progress.downloaded_bytes)s|%(progress.total_bytes,progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s|%(info.vcodec)s|%(info.acodec)s|%(info.resolution)s|%(info.ext)s|%(progress.filename)s",
              "--print", "before_dl:FBDI|%(id)s|%(format_id)s|%(resolution)s|%(vcodec)s|%(acodec)s|%(tbr)s|%(abr)s|%(fps)s|%(ext)s",
              "--print", "after_move:FBDF|%(filepath)s", "--windows-filenames"]
         q = self.quality.get()
@@ -416,6 +416,9 @@ class App(tk.Tk):
                     d, t, sp, eta = num(f.get("d")), num(f.get("t")), num(f.get("s")), num(f.get("e"))
                     vc, ac = f.get("vc", "none"), f.get("ac", "none")
                     if f.get("fid") != cur_stream: cur_stream = f.get("fid"); streams.append(cur_stream)
+                    fn = f.get("fn", "")
+                    if fn and fn != "NA" and fn not in self.job_paths:
+                        self.job_paths.add(fn); self.ui(self.set_tech, dosya=os.path.basename(fn))
                     if vc not in ("none", "NA", "") and ac in ("none", "NA", ""): stage = "Video akışı indiriliyor"
                     elif ac not in ("none", "NA", "") and vc in ("none", "NA", ""): stage = "Ses akışı indiriliyor"
                     else: stage = "İndiriliyor"
