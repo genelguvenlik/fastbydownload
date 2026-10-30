@@ -224,7 +224,7 @@ class App(tk.Tk):
         self.b_dl = ttk.Button(b, text="⬇  İndir", style="Accent.TButton", command=self.start); self.b_dl.pack(side="left")
         self.b_pause = ttk.Button(b, text="⏸  Duraklat", command=self.toggle_pause, state="disabled"); self.b_pause.pack(side="left", padx=(6, 0))
         self.b_cancel = ttk.Button(b, text="İptal", command=self.cancel, state="disabled"); self.b_cancel.pack(side="left", padx=6)
-        self.paused = False; self.job = None
+        self.paused = False; self.job = None; self.closing = False
         self.b_ofile = ttk.Button(b, text="Dosyayı Aç", command=self.open_last, state="disabled"); self.b_ofile.pack(side="right")
         self.b_odir = ttk.Button(b, text="Klasörde Göster", command=self.reveal_last, state="disabled"); self.b_odir.pack(side="right", padx=6)
         self.pb = ttk.Progressbar(t1, maximum=1000); self.pb.pack(fill="x", pady=4)
@@ -283,7 +283,7 @@ class App(tk.Tk):
             while True:
                 fn, a, kw = self.q.get_nowait()
                 try: fn(*a, **kw)
-                except Exception: pass
+                except Exception: log_err(f"ui {getattr(fn, '__name__', fn)}")
         except queue.Empty: pass
         try:
             cur = float(self.pb["value"]); tgt = self.pb_target * 10
@@ -392,7 +392,7 @@ class App(tk.Tk):
         self.cancelled = False; self.paused = False; self.pb["value"] = 0; self.pb_target = 0
         self.b_dl.config(state="disabled"); self.b_cancel.config(state="normal"); self.b_pause.config(state="normal", text="⏸  Duraklat")
         self.job = (u, out, self.kind.get(), self.quality.get())
-        self.job_ids, self.job_paths = set(), set()
+        self.job_ids, self.job_paths, self.job_final = set(), set(), set(); self.closing = getattr(self, "closing", False)
         try: self.job_before = set(os.listdir(out))
         except OSError: self.job_before = set()
         self.status.config(text="Bağlantı çözümleniyor…")
@@ -404,9 +404,11 @@ class App(tk.Tk):
         files, err = [], []
         streams, cur_stream = [], None
         try:
+            if self.cancelled: raise RuntimeError("iptal")
             self.proc = subprocess.Popen(self.build_args(u, out), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                          encoding="utf-8", errors="replace", creationflags=NOWIN, bufsize=1,
                                          stdin=subprocess.DEVNULL, env=dict(os.environ, PYTHONUNBUFFERED="1"))
+            if self.cancelled: self.kill_proc()
             for line in self.proc.stdout:
                 line = line.rstrip()
                 if line.startswith("FBDP|"):
@@ -442,10 +444,13 @@ class App(tk.Tk):
                     self.job_paths.add(line.split(":", 1)[1].strip())
                     self.ui(self.set_tech, dosya=os.path.basename(line.split(":", 1)[1].strip()))
                 elif line.startswith("FBDF|"):
-                    files.append(line[5:]); self.ui(self.set_tech, dosya=os.path.basename(line[5:]))
+                    files.append(line[5:]); self.job_final.add(os.path.basename(line[5:])); self.ui(self.set_tech, dosya=os.path.basename(line[5:]))
                 elif line.startswith("[Merger]"):
+                    m = re.search(r'into "(.+)"', line)
+                    if m: self.job_final.add(os.path.basename(m.group(1)))
                     self.ui(self.set_tech, asama="Video ve ses birleştiriliyor (ffmpeg)"); self.ui(self.status.config, {"text": "Birleştiriliyor…"})
                 elif line.startswith("[ExtractAudio]"):
+                    if "Destination:" in line: self.job_final.add(os.path.basename(line.split("Destination:", 1)[1].strip()))
                     self.ui(self.set_tech, asama="MP3'e dönüştürülüyor (ffmpeg)"); self.ui(self.status.config, {"text": "MP3'e dönüştürülüyor…"})
                 elif line.startswith("[VideoRemuxer]") or line.startswith("[EmbedThumbnail]") or line.startswith("[Metadata]"):
                     self.ui(self.set_tech, asama="Son işlemler (kapak / etiket)")
@@ -458,6 +463,7 @@ class App(tk.Tk):
         self.ui(self.done, rc, files, err, u, kind, q)
 
     def done(self, rc, files, err, u, kind, q):
+        if self.paused and not self.cancelled and rc == 0 and files: self.paused = False  # duraklat tam bitiste basildi
         if self.paused and not self.cancelled:
             self.t0 = None; self.set_tech(asama="Duraklatıldı ⏸", hiz="—", kalan="—")
             self.status.config(text="Duraklatıldı. Devam etmek için ▶ Devam'a bas."); self.b_pause.config(state="normal", text="▶  Devam"); return
@@ -465,7 +471,9 @@ class App(tk.Tk):
         if self.cancelled:
             self.t0 = None; self.pb_target = 0; self.pb["value"] = 0
             n = self.cleanup_job(); self.set_tech(asama="İptal edildi", yuzde="—", hiz="—", kalan="—")
-            self.status.config(text=f"İndirme iptal edildi." + (f" {n} yarım dosya silindi." if n else "")); return
+            self.status.config(text=f"İndirme iptal edildi." + (f" {n} yarım dosya silindi." if n else ""))
+            if self.closing: self._force_close()
+            return
         self.t0 = None
         if rc == 0 and files:
             f = files[-1]; self.last_file = f; self.pb_target = 100
@@ -483,22 +491,27 @@ class App(tk.Tk):
             self.status.config(text=f"Hata: {msg}")
             messagebox.showerror(APP, f"İndirme başarısız:\n{msg}\n\nSite değiştiyse Ayarlar'dan yt-dlp'yi güncellemeyi dene.")
 
-    TEMP_RE = re.compile(r"(\.part(-Frag\d+)?(\.part)?|\.ytdl|\.temp(\.\w+)?|\.f[\w-]+\.\w+|\.webp|\.jpg|\.png)$", re.I)
+    PART_RE = re.compile(r"(\.part|\.part-Frag\d+(\.part)?|\.ytdl)$", re.I)
+    STREAM_RE = re.compile(r"\.f[0-9A-Za-z_-]+\.\w+$")
     def cleanup_job(self):
-        """Sadece bu indirmeye ait yarim/gecici dosyalari siler: adinda [video-id] olan ve
-        ya indirme baslamadan once klasorde olmayan ya da gecici uzantili dosyalar."""
+        """Sadece BU indirmenin yarim dosyalarini siler: yt-dlp'nin bildirdigi hedeflerin .part/.ytdl/-Frag
+        dosyalari ve birlesmemis .fNNN akislari (yalnizca bu isin bildirdigi tam adlar). Tamamlanmis son dosyaya,
+        onceden var olan dosyalara ve resimlere asla dokunmaz."""
         out = self.job[1]; n = 0
-        names = set()
-        for pth in self.job_paths:
-            b = os.path.basename(pth)
-            for suf in ("", ".part", ".ytdl"): names.add(b + suf)
+        dests = {os.path.basename(p) for p in self.job_paths}
+        final = set(self.job_final)
         try: lst = os.listdir(out)
         except OSError: return 0
         for f in lst:
-            ours = f in names or any(f"[{i}]" in f for i in self.job_ids if i)
-            if not ours: continue
-            if f in self.job_before and not self.TEMP_RE.search(f): continue  # onceden var olan tamamlanmis dosyaya dokunma
-            if f.endswith("-onceki.mp4"): continue
+            if f in final: continue
+            sil = False
+            for d in dests:
+                if f.startswith(d) and self.PART_RE.search(f[len(d):] or "x") and f != d: sil = True
+                if f == d and self.STREAM_RE.search(d) and f not in self.job_before: sil = True  # birlesmemis akis
+            for t in final:  # birlestirme gecici dosyasi: ad.temp.mp4
+                st, ext = os.path.splitext(t)
+                if f == f"{st}.temp{ext}": sil = True
+            if not sil: continue
             for _ in range(10):
                 try: os.remove(os.path.join(out, f)); n += 1; break
                 except FileNotFoundError: break
@@ -525,6 +538,8 @@ class App(tk.Tk):
             self.cancelled = True; self.paused = False
             self.done(1, [], [], *self.job); return
         p = self.proc
+        if not p and self.job and str(self.b_cancel["state"]) == "normal":
+            self.cancelled = True; self.status.config(text="İptal ediliyor…"); return  # devam basladi, surec henuz yok
         if p:
             self.cancelled = True
             if os.name == "nt": subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True, creationflags=NOWIN)
@@ -632,9 +647,23 @@ class App(tk.Tk):
                 self.ui(messagebox.showerror, APP, f"Güncelleme başarısız: {e}")
         threading.Thread(target=w, daemon=True).start()
 
+    def _force_close(self):
+        try: self.destroy()
+        except Exception: pass
+
     def on_close(self):
         if self.proc and not messagebox.askyesno(APP, "İndirme sürüyor. Kapatılsın mı?"): return
-        self.cancel(); self.save_settings(); self.destroy()
+        self.save_settings()
+        if self.proc or (self.job and str(self.b_cancel["state"]) == "normal"):
+            self.closing = True; self.cancel(); self.after(10000, self._force_close)  # temizlik bitince done() kapatir
+        else: self.destroy()
+
+def log_err(where):
+    try:
+        import traceback
+        with open(os.path.join(os.path.dirname(HIST), "hata.log"), "a", encoding="utf-8") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {where}\n{traceback.format_exc()}\n")
+    except Exception: pass
 
 def selftest():
     """--selftest URL KIND QUALITY OUTDIR : arayuzsuz indirme (CI testi icin)"""
