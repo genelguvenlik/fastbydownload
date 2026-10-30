@@ -106,9 +106,10 @@ def install_and_restart(new_exe, sha):
     with open(ps1, "w", encoding="utf-8-sig") as f: f.write(PS_INSTALL)
     env = {k: v for k, v in os.environ.items() if not (k.startswith("_MEI") or k.startswith("_PYI"))}
     env.update(FBD_NEW=new_exe, FBD_TGT=tgt, FBD_SHA=sha.lower(), FBD_DATA=APPDATA, FBD_PIDS=f"{os.getpid()},{os.getppid()}")
-    subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", ps1],
-                     env=env, creationflags=0x00000008 | 0x00000200 | 0x01000000, close_fds=True,
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    args = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", ps1]
+    kw = dict(env=env, close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try: subprocess.Popen(args, creationflags=0x00000008 | 0x00000200 | 0x01000000, **kw)  # DETACHED | NEW_GROUP | BREAKAWAY_FROM_JOB
+    except OSError: subprocess.Popen(args, creationflags=0x00000008 | 0x00000200, **kw)
 
 # ---------------- arayuz ----------------
 PROG_RE = re.compile(r"^FBDP\|(?P<p>[^|]*)\|(?P<s>[^|]*)\|(?P<e>[^|]*)\|(?P<d>[^|]*)\|(?P<t>[^|]*)$")
