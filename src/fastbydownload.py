@@ -600,4 +600,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest": selftest()
     a = App()
     if len(sys.argv) > 1 and re.match(r"https?://", sys.argv[1]): a.url.set(sys.argv[1]); a.after(300, a.preview)
+    if os.environ.get("FBD_TEST_CLICK"):  # test: "video|720p" -> secenekleri ayarla ve Indir dugmesine bas
+        k, qq = os.environ["FBD_TEST_CLICK"].split("|")
+        def click():
+            a.kind.set(k); a.kind_changed(); a.quality.set(qq); a.b_dl.invoke()
+        a.after(6000, click)
     a.mainloop()
