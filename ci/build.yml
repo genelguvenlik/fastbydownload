@@ -27,7 +27,7 @@ jobs:
       - name: Exe derle
         shell: pwsh
         run: |
-          $common = @('--onefile','--windowed','--noconfirm','--icon','assets/icon.ico','--add-data','assets/icon.ico;.','--add-data','tools.zip;.','--add-data','LICENSES;LICENSES')
+          $common = @('--onefile','--windowed','--noconfirm','--icon','assets/icon.ico','--add-data','assets/icon.ico;.','--add-data','tools.zip;.','--add-data','LICENSES;LICENSES','--collect-data','sv_ttk')
           pyinstaller @common --name fastByDownload src/fastbydownload.py
           (Get-Content src/fastbydownload.py) -replace 'VERSION = "[0-9.]+"','VERSION = "9.9.9"' | Set-Content tmp_new.py -Encoding utf8
           pyinstaller @common --distpath dist-new --name fastByDownload tmp_new.py
