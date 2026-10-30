@@ -114,10 +114,21 @@ def install_and_restart(new_exe, sha):
 # ---------------- arayuz ----------------
 PROG_RE = re.compile(r"^FBDP\|(?P<p>[^|]*)\|(?P<s>[^|]*)\|(?P<e>[^|]*)\|(?P<d>[^|]*)\|(?P<t>[^|]*)$")
 
+def dpi_aware():
+    if os.name != "nt": return
+    import ctypes
+    try: ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # PER_MONITOR_AWARE_V2
+    except Exception:
+        try: ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try: ctypes.windll.user32.SetProcessDPIAware()
+            except Exception: pass
+
 class App(tk.Tk):
     def __init__(self):
+        dpi_aware()
         super().__init__()
-        self.title(f"{APP} {VERSION}"); self.geometry("880x640"); self.minsize(760, 560)
+        self.title(f"{APP} {VERSION}"); sc = self.winfo_fpixels("1i") / 96; self.geometry(f"{int(920*sc)}x{int(680*sc)}"); self.minsize(int(780*sc), int(600*sc))
         try: self.iconbitmap(res("icon.ico"))
         except Exception: pass
         self.q = queue.Queue(); self.proc = None; self.cancelled = False; self.info = None; self.last_file = None
@@ -129,11 +140,30 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def style(self):
+        import tkinter.font as tkf
+        fams = set(tkf.families(self))
+        self.FONT = next((f for f in ("Segoe UI Variable Text", "Segoe UI", "Inter", "DejaVu Sans") if f in fams), "TkDefaultFont")
+        head = "Segoe UI Variable Display" if "Segoe UI Variable Display" in fams else self.FONT
+        try: self.tk.call("tk", "scaling", self.winfo_fpixels("1i") / 72.0)
+        except Exception: pass
+        for n in ("TkDefaultFont", "TkTextFont", "TkMenuFont", "TkHeadingFont", "TkCaptionFont", "TkSmallCaptionFont", "TkIconFont", "TkTooltipFont"):
+            try: tkf.nametofont(n).configure(family=self.FONT, size=10)
+            except Exception: pass
+        try:
+            import sv_ttk; sv_ttk.set_theme("light")
+        except Exception:
+            ttk.Style(self).theme_use("vista" if os.name == "nt" else "clam")
         s = ttk.Style(self)
-        try: s.theme_use("vista" if os.name == "nt" else "clam")
-        except Exception: s.theme_use("clam")
-        s.configure("Title.TLabel", font=("Segoe UI", 15, "bold"))
-        s.configure("Big.TButton", font=("Segoe UI", 11, "bold"), padding=8)
+        for n in ("TkDefaultFont", "TkTextFont", "TkHeadingFont"):
+            try: tkf.nametofont(n).configure(family=self.FONT, size=10)
+            except Exception: pass
+        s.configure(".", font=(self.FONT, 10))
+        s.configure("Title.TLabel", font=(head, 15, "bold"))
+        s.configure("Big.TButton", font=(self.FONT, 11, "bold"))
+        s.configure("Treeview", rowheight=int(self.winfo_fpixels("1i") / 96 * 28))
+        s.configure("Treeview.Heading", font=(self.FONT, 10, "bold"))
+        self.option_add("*TCombobox*Listbox.font", (self.FONT, 10))
+        self.F = lambda size=10, w="normal": (self.FONT, size, w)
 
     def build(self):
         nb = ttk.Notebook(self); nb.pack(fill="both", expand=True, padx=8, pady=8); self.nb = nb
@@ -144,7 +174,7 @@ class App(tk.Tk):
         ttk.Label(t1, text="Video bağlantısını yapıştır", style="Title.TLabel").pack(anchor="w")
         r = ttk.Frame(t1); r.pack(fill="x", pady=6)
         self.url = tk.StringVar()
-        self.e_url = ttk.Entry(r, textvariable=self.url, font=("Segoe UI", 11)); self.e_url.pack(side="left", fill="x", expand=True, ipady=4)
+        self.e_url = ttk.Entry(r, textvariable=self.url, font=(self.FONT, 11)); self.e_url.pack(side="left", fill="x", expand=True, ipady=4)
         ttk.Button(r, text="Yapıştır", command=self.paste).pack(side="left", padx=4)
         ttk.Button(r, text="Önizle", command=self.preview).pack(side="left")
         self.url.trace_add("write", lambda *a: self.after(600, self.auto_preview, self.url.get()))
@@ -152,7 +182,7 @@ class App(tk.Tk):
         self.thumb = ttk.Label(pv, text="(önizleme)", width=40, anchor="center", relief="groove"); self.thumb.pack(side="left", ipadx=4, ipady=40)
         self.thumb_img = None
         inf = ttk.Frame(pv); inf.pack(side="left", fill="both", expand=True, padx=10)
-        self.l_title = ttk.Label(inf, text="", font=("Segoe UI", 12, "bold"), wraplength=480, justify="left"); self.l_title.pack(anchor="w")
+        self.l_title = ttk.Label(inf, text="", font=(self.FONT, 13, "bold"), wraplength=480, justify="left"); self.l_title.pack(anchor="w")
         self.l_meta = ttk.Label(inf, text="", foreground="#555"); self.l_meta.pack(anchor="w", pady=4)
         op = ttk.LabelFrame(t1, text="Seçenekler", padding=10); op.pack(fill="x", pady=6)
         self.kind = tk.StringVar(value=self.settings.get("kind", "video"))
