@@ -67,16 +67,23 @@ def reveal(p):
 
 # ---------------- guncelleme (QxMsn yontemi: manifest + SHA256 + PowerShell ile yerinde degistirme) -------------
 PS_INSTALL = r'''
-$ErrorActionPreference = 'SilentlyContinue'
-$new = $env:FBD_NEW; $tgt = $env:FBD_TGT; $sha = $env:FBD_SHA; $procId = [int]$env:FBD_PID
-try { Wait-Process -Id $procId -Timeout 60 } catch {}
+$ErrorActionPreference = 'Continue'
+$log = Join-Path $env:FBD_DATA 'guncelleme.log'
+function L($m) { Add-Content -LiteralPath $log -Value ((Get-Date -Format s) + ' ' + $m) }
+$new = $env:FBD_NEW; $tgt = $env:FBD_TGT; $sha = $env:FBD_SHA
+L "basladi new=$new tgt=$tgt"
+foreach ($p in ($env:FBD_PIDS -split ',')) { if ($p) { try { Wait-Process -Id ([int]$p) -Timeout 60 -ErrorAction Stop } catch {} } }
 $ok = $false
-if ((Get-FileHash -LiteralPath $new -Algorithm SHA256).Hash.ToLower() -eq $sha) {
-  for ($n = 0; $n -lt 60 -and -not $ok; $n++) { try { Copy-Item -LiteralPath $new -Destination $tgt -Force -ErrorAction Stop; $ok = $true } catch { Start-Sleep -Milliseconds 700 } }
-}
-Remove-Item -LiteralPath $new -Force
+$h = (Get-FileHash -LiteralPath $new -Algorithm SHA256).Hash.ToLower()
+if ($h -eq $sha) {
+  for ($n = 0; $n -lt 80 -and -not $ok; $n++) { try { Copy-Item -LiteralPath $new -Destination $tgt -Force -ErrorAction Stop; $ok = $true } catch { Start-Sleep -Milliseconds 750 } }
+} else { L "sha uyusmadi $h" }
+L "kopyalandi=$ok"
+Remove-Item -LiteralPath $new -Force -ErrorAction SilentlyContinue
+Get-ChildItem env: | Where-Object { $_.Name -like '_MEI*' -or $_.Name -like '_PYI*' } | ForEach-Object { Remove-Item ("env:" + $_.Name) }
 $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
 Start-Process -FilePath $tgt
+L "baslatildi"
 '''
 
 def fetch_manifest():
@@ -94,14 +101,14 @@ def download_file(url, dst, cb=None):
     return h.hexdigest()
 
 def install_and_restart(new_exe, sha):
-    import base64
     tgt = sys.executable
-    env = dict(os.environ, FBD_NEW=new_exe, FBD_TGT=tgt, FBD_SHA=sha.lower(), FBD_PID=str(os.getpid()))
-    for k in list(env):
-        if k.startswith("_MEI") or k.startswith("_PYI"): env.pop(k, None)
-    enc = base64.b64encode(PS_INSTALL.encode("utf-16le")).decode()
-    subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand", enc],
-                     env=env, creationflags=NOWIN | 0x00000008, close_fds=True)
+    ps1 = os.path.join(APPDATA, "guncelle.ps1")
+    with open(ps1, "w", encoding="utf-8-sig") as f: f.write(PS_INSTALL)
+    env = {k: v for k, v in os.environ.items() if not (k.startswith("_MEI") or k.startswith("_PYI"))}
+    env.update(FBD_NEW=new_exe, FBD_TGT=tgt, FBD_SHA=sha.lower(), FBD_DATA=APPDATA, FBD_PIDS=f"{os.getpid()},{os.getppid()}")
+    subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", ps1],
+                     env=env, creationflags=0x00000008 | 0x00000200 | 0x01000000, close_fds=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 # ---------------- arayuz ----------------
 PROG_RE = re.compile(r"^FBDP\|(?P<p>[^|]*)\|(?P<s>[^|]*)\|(?P<e>[^|]*)\|(?P<d>[^|]*)\|(?P<t>[^|]*)$")
