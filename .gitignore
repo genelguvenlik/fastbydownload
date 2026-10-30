@@ -5,3 +5,4 @@ bin/
 *.spec
 __pycache__/
 tmp_new.py
+tools.zip

@@ -25,14 +25,21 @@ YTDLP = os.path.join(BIN, exe("yt-dlp"))
 FFMPEG = os.path.join(BIN, exe("ffmpeg"))
 
 def prepare_bin():
+    """Araclar exe icinde tek bir tools.zip olarak gelir; ilk acilista (veya surum degisince) %APPDATA%\\fastByDownload\\bin'e acilir."""
+    import zipfile
     os.makedirs(BIN, exist_ok=True)
-    for n in (exe("yt-dlp"), exe("ffmpeg"), exe("ffprobe")):
-        dst, src = os.path.join(BIN, n), res(n)
-        if os.path.exists(src):
-            if n.startswith("yt-dlp") and os.path.exists(dst):
-                continue  # kendi kendini guncelleyen kopyayi koru
-            if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(src):
-                shutil.copy2(src, dst)
+    z = res("tools.zip")
+    if not os.path.exists(z): return
+    stamp = f"{VERSION}:{os.path.getsize(z)}"
+    mark = os.path.join(BIN, ".surum")
+    try: cur = open(mark).read()
+    except OSError: cur = ""
+    if cur == stamp and os.path.exists(FFMPEG) and os.path.exists(YTDLP): return
+    with zipfile.ZipFile(z) as zf:
+        for n in zf.namelist():
+            if n.lower().startswith("yt-dlp") and os.path.exists(YTDLP): continue  # kendi guncellenen kopyayi koru
+            zf.extract(n, BIN)
+    with open(mark, "w") as f: f.write(stamp)
 
 def load_json(p, d):
     try:
