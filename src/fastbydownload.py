@@ -367,7 +367,7 @@ class App(tk.Tk):
         tmpl = os.path.join(out, "%(title).150B [%(id)s].%(ext)s")
         a = [YTDLP, u, "--no-playlist", "--newline", "--no-colors", "--progress", "--continue", "--part", "--ffmpeg-location", BIN, "-o", tmpl,
              "--progress-template", "download:FBDP|%(progress.downloaded_bytes)s|%(progress.total_bytes,progress.total_bytes_estimate)s|%(progress.speed)s|%(progress.eta)s|%(info.format_id)s|%(info.vcodec)s|%(info.acodec)s|%(info.resolution)s|%(info.ext)s",
-             "--print", "before_dl:FBDI|%(format_id)s|%(resolution)s|%(vcodec)s|%(acodec)s|%(tbr)s|%(abr)s|%(fps)s|%(ext)s",
+             "--print", "before_dl:FBDI|%(id)s|%(format_id)s|%(resolution)s|%(vcodec)s|%(acodec)s|%(tbr)s|%(abr)s|%(fps)s|%(ext)s",
              "--print", "after_move:FBDF|%(filepath)s", "--windows-filenames"]
         q = self.quality.get()
         if self.kind.get() == "audio":
@@ -392,6 +392,9 @@ class App(tk.Tk):
         self.cancelled = False; self.paused = False; self.pb["value"] = 0; self.pb_target = 0
         self.b_dl.config(state="disabled"); self.b_cancel.config(state="normal"); self.b_pause.config(state="normal", text="⏸  Duraklat")
         self.job = (u, out, self.kind.get(), self.quality.get())
+        self.job_ids, self.job_paths = set(), set()
+        try: self.job_before = set(os.listdir(out))
+        except OSError: self.job_before = set()
         self.status.config(text="Bağlantı çözümleniyor…")
         for k in self.tech: self.tech[k].config(text="—")
         self.set_tech(asama="Video bilgisi alınıyor", klasor=out); self.t0 = time.time()
@@ -424,7 +427,8 @@ class App(tk.Tk):
                             boyut=f"{human(d)} / {human(t)}", kalan=hms(eta))
                     self.ui(self.status.config, {"text": f"{stage} — %{pct:.1f}  •  {human(sp)}/s" if pct is not None and sp else stage + "…"})
                 elif line.startswith("FBDI|"):
-                    p = (line[5:].split("|") + [""] * 8)[:8]
+                    p = (line[5:].split("|") + [""] * 9)[:9]
+                    self.job_ids.add(p.pop(0))
                     fid, resn, vc, ac, tbr, abr, fps, ext = p
                     self._two = "+" in fid
                     kod = []
@@ -435,6 +439,7 @@ class App(tk.Tk):
                     else: bic = f"MP4 {resn}" + (f" @{float(fps):.0f}fps" if num(fps) else "") + f"  (format {fid})"
                     self.ui(self.set_tech, bicim=bic, kodek=" + ".join(kod) + (f"  •  {br}" if br else ""))
                 elif line.startswith("[download] Destination:"):
+                    self.job_paths.add(line.split(":", 1)[1].strip())
                     self.ui(self.set_tech, dosya=os.path.basename(line.split(":", 1)[1].strip()))
                 elif line.startswith("FBDF|"):
                     files.append(line[5:]); self.ui(self.set_tech, dosya=os.path.basename(line[5:]))
@@ -458,8 +463,9 @@ class App(tk.Tk):
             self.status.config(text="Duraklatıldı. Devam etmek için ▶ Devam'a bas."); self.b_pause.config(state="normal", text="▶  Devam"); return
         self.b_dl.config(state="normal"); self.b_cancel.config(state="disabled"); self.b_pause.config(state="disabled", text="⏸  Duraklat")
         if self.cancelled:
-            self.t0 = None; self.pb_target = 0; self.pb["value"] = 0; self.set_tech(asama="İptal edildi")
-            self.status.config(text="İndirme iptal edildi."); return
+            self.t0 = None; self.pb_target = 0; self.pb["value"] = 0
+            n = self.cleanup_job(); self.set_tech(asama="İptal edildi", yuzde="—", hiz="—", kalan="—")
+            self.status.config(text=f"İndirme iptal edildi." + (f" {n} yarım dosya silindi." if n else "")); return
         self.t0 = None
         if rc == 0 and files:
             f = files[-1]; self.last_file = f; self.pb_target = 100
@@ -476,6 +482,28 @@ class App(tk.Tk):
             msg = err[-1] if err else f"çıkış kodu {rc}"
             self.status.config(text=f"Hata: {msg}")
             messagebox.showerror(APP, f"İndirme başarısız:\n{msg}\n\nSite değiştiyse Ayarlar'dan yt-dlp'yi güncellemeyi dene.")
+
+    TEMP_RE = re.compile(r"(\.part(-Frag\d+)?(\.part)?|\.ytdl|\.temp(\.\w+)?|\.f[\w-]+\.\w+|\.webp|\.jpg|\.png)$", re.I)
+    def cleanup_job(self):
+        """Sadece bu indirmeye ait yarim/gecici dosyalari siler: adinda [video-id] olan ve
+        ya indirme baslamadan once klasorde olmayan ya da gecici uzantili dosyalar."""
+        out = self.job[1]; n = 0
+        names = set()
+        for pth in self.job_paths:
+            b = os.path.basename(pth)
+            for suf in ("", ".part", ".ytdl"): names.add(b + suf)
+        try: lst = os.listdir(out)
+        except OSError: return 0
+        for f in lst:
+            ours = f in names or any(f"[{i}]" in f for i in self.job_ids if i)
+            if not ours: continue
+            if f in self.job_before and not self.TEMP_RE.search(f): continue  # onceden var olan tamamlanmis dosyaya dokunma
+            if f.endswith("-onceki.mp4"): continue
+            for _ in range(10):
+                try: os.remove(os.path.join(out, f)); n += 1; break
+                except FileNotFoundError: break
+                except OSError: time.sleep(0.3)
+        return n
 
     def kill_proc(self):
         p = self.proc
@@ -633,5 +661,7 @@ if __name__ == "__main__":
             if os.environ.get("FBD_TEST_PAUSE"):  # N sn sonra Duraklat, 8 sn sonra Devam
                 n = int(os.environ["FBD_TEST_PAUSE"]) * 1000
                 a.after(n, a.b_pause.invoke); a.after(n + 8000, a.b_pause.invoke)
+            if os.environ.get("FBD_TEST_CANCEL"):  # N sn sonra Iptal
+                a.after(int(os.environ["FBD_TEST_CANCEL"]) * 1000, a.b_cancel.invoke)
         a.after(6000, click)
     a.mainloop()
